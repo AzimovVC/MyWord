@@ -1058,6 +1058,25 @@
     });
   }
 
+  /* ---------- первый запуск ---------- */
+  function renderOnboard(){
+    var app=document.getElementById('app');
+    document.getElementById('main').className='center';
+    app.className='page';
+    document.getElementById('top').innerHTML='';
+    document.getElementById('rail').innerHTML='';document.getElementById('rail').style.display='none';
+    sceneShow(false);
+    app.innerHTML='<div><h1>Слово дано</h1>'+
+      '<p class="why" style="margin-top:12px">Привычки с расписанием. Ты даёшь слово и подтверждаешь его своей фразой, по памяти.</p></div>'+
+      '<div class="sec"><p class="why">Сделать: действие в своё окно времени.</p>'+
+      '<p class="why">Устоять: период, в конце подтверждаешь фразой.</p>'+
+      '<p class="why">Таймер: сессия с отсчётом.</p>'+
+      '<p class="why">Счёт: несколько порций за день.</p></div>'+
+      '<p class="why">Напоминания приходят уведомлениями. Включить их можно в настройках, когда создашь первую привычку.</p>'+
+      '<button class="go" id="onb" type="button" style="opacity:1;pointer-events:auto">Создать первую привычку</button>';
+    document.getElementById('onb').addEventListener('click',openNew);
+  }
+
   /* ---------- JOURNAL ---------- */
   function renderLog(){
     var h=cur(),avoid=h.kind==='avoid',timer=h.kind==='timer',count=h.kind==='count';
@@ -1105,11 +1124,12 @@
     if(t==='today')renderToday(center);
     else if(t==='habit')renderHabit();
     else if(t==='urge')renderUrge();
+    else if(t==='onboard')renderOnboard();
     else renderLog();
     window.scrollTo(0,0);
   }
   restoreTimer();
-  if(S.habits.length)setTab('today',true);else openNew();
+  if(S.habits.length)setTab('today',true);else setTab('onboard');
 
   /* ---------- глубокие ссылки: /?habit=ID выбирает привычку, /?urge=ID открывает «Тянет» ---------- */
   function handleLink(href){

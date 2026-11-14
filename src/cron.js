@@ -14,8 +14,9 @@ export async function runSchedule(env, nowMs = Date.now()) {
   const db = env.DB;
   const report = { sent: [], skipped: null };
 
-  const subs = await db.prepare('SELECT COUNT(*) c FROM push_subs').first();
-  if (!subs.c) { report.skipped = 'no_subscriptions'; return report; }
+  const subsRes = await db.prepare('SELECT endpoint,p256dh,auth FROM push_subs').all();
+  if (!subsRes.results.length) { report.skipped = 'no_subscriptions'; return report; }
+  const alive = [...subsRes.results]; // подписки, которые ещё не признаны мёртвыми в этом запуске
   if (!env.VAPID_PRIVATE_KEY || !env.VAPID_PUBLIC_KEY || !env.VAPID_SUBJECT) { report.skipped = 'no_vapid'; return report; }
 
   const tzRow = await db.prepare("SELECT value FROM settings WHERE key = 'tz'").first();
@@ -52,7 +53,7 @@ export async function runSchedule(env, nowMs = Date.now()) {
       }
       const { payload, idx } = buildPayload(h, due, m.hm, { streak, lastIdx });
       if (idx != null && idx !== lastIdx) await db.prepare('INSERT OR REPLACE INTO settings (key,value) VALUES (?,?)').bind(`ntl:${h.id}`, String(idx)).run();
-      await sendToAll(env, payload, { ttl: 600, urgency: due.last ? 'high' : 'normal' });
+      await sendToAll(env, payload, { ttl: 600, urgency: due.last ? 'high' : 'normal', subs: alive });
       report.sent.push(key);
     }
   }
@@ -68,7 +69,7 @@ export async function runSchedule(env, nowMs = Date.now()) {
     await sendToAll(env, {
       title: h.name, body: 'Время вышло. Открой приложение, чтобы записать сессию.',
       habitId: h.id, url: `/?habit=${encodeURIComponent(h.id)}`, tag: `timer-${h.id}`,
-    }, { ttl: 900, urgency: 'high' });
+    }, { ttl: 900, urgency: 'high', subs: alive });
     report.sent.push(`timer|${h.id}`);
   }
   await db.prepare('DELETE FROM timers WHERE ends_at < ?').bind(nowMs - 86400000).run();
