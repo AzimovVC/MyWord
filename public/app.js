@@ -1,6 +1,7 @@
 (function(){
   var MONTHS=['января','февраля','марта','апреля','мая','июня','июля','августа','сентября','октября','ноября','декабря'];
   var DEMO=!!(window.Store&&window.Store.demo);
+  var DEVICE_TZ=(function(){try{return Intl.DateTimeFormat().resolvedOptions().timeZone||'';}catch(e){return '';}})();
   var demo={offset:0,time:null,fast:false};
   var current=null, hintUsed=false, tab='today', draft=null, activePh=0, urge=null, urgeTimer=null, tm=null, tmTimer=null, accOpen={}, sky=false, sceneM=null, sceneRaf=null, sceneBuilt=false;
   try{sky=localStorage.getItem('slovo-sky')==='1';}catch(e){}
@@ -100,6 +101,7 @@
     if(S.settings&&S.settings.sky!=null){sky=S.settings.sky==='1';try{localStorage.setItem('slovo-sky',sky?'1':'0');}catch(e){}}
   }
   applySettings();
+  if(!DEMO&&!S.settings.tz&&DEVICE_TZ){S.settings.tz=DEVICE_TZ;Store.setSetting('tz',DEVICE_TZ);}
   function addLog(l){
     if(!DEMO){l.id=Store.newId();}
     S.logs.unshift(l);
@@ -638,6 +640,94 @@
   function acc(k,title,val,inner){
     return '<details class="acc" data-k="'+k+'"'+(accOpen[k]?' open':'')+'><summary><span>'+title+'</span><em id="sm-'+k+'">'+val+'</em></summary><div class="accb">'+inner+'</div></details>';
   }
+  /* ---------- уведомления на этом устройстве ---------- */
+  function isIos(){return /iPad|iPhone|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);}
+  function isStandalone(){return !!(navigator.standalone||(window.matchMedia&&matchMedia('(display-mode: standalone)').matches));}
+  function pushSupported(){return 'serviceWorker' in navigator&&'PushManager' in window&&'Notification' in window;}
+  function tzList(){
+    var l=[];try{if(Intl.supportedValuesOf)l=Intl.supportedValuesOf('timeZone');}catch(e){}
+    var cur=(S.settings&&S.settings.tz)||DEVICE_TZ;
+    if(cur&&l.indexOf(cur)<0)l=[cur].concat(l);
+    if(DEVICE_TZ&&l.indexOf(DEVICE_TZ)<0)l=[DEVICE_TZ].concat(l);
+    return l;
+  }
+  function pushHtml(){
+    if(DEMO)return '';
+    var cur=(S.settings&&S.settings.tz)||DEVICE_TZ;
+    return '<div class="sec"><span class="lab">Уведомления на этом устройстве</span><div id="p-box"></div>'+
+      '<label class="lab" for="p-tz">Часовой пояс</label><select class="in" id="p-tz">'+tzList().map(function(z){return '<option value="'+esc(z)+'"'+(z===cur?' selected':'')+'>'+esc(z)+'</option>';}).join('')+'</select>'+
+      '<p class="why">По этому поясу приходят уведомления'+(DEVICE_TZ&&DEVICE_TZ!==cur?'. Сейчас устройство в поясе '+esc(DEVICE_TZ):'')+'.</p>'+
+      '<p class="why" id="p-msg" role="status"></p></div>';
+  }
+  function urlB64(b){var p='='.repeat((4-b.length%4)%4),r=atob((b+p).replace(/-/g,'+').replace(/_/g,'/'));return Uint8Array.from(r,function(c){return c.charCodeAt(0);});}
+  function bindPush(){
+    if(DEMO)return;
+    var $=function(id){return document.getElementById(id);},msg=function(t){var m=$('p-msg');if(m)m.textContent=t;};
+    var tzs=$('p-tz');
+    if(tzs)tzs.addEventListener('change',function(){S.settings.tz=tzs.value;Store.setSetting('tz',tzs.value);msg('Пояс сохранён.');});
+    var box=$('p-box');
+    if(!box)return;
+    function draw(sub){
+      if(tab!=='habit'||!$('p-box'))return;
+      if(!pushSupported()){
+        box.innerHTML='<p class="why">'+(isIos()&&!isStandalone()
+          ?'Чтобы получать уведомления на iPhone, добавь приложение на экран «Домой»: в Safari нажми «Поделиться» → «На экран Домой», потом открой его оттуда.'
+          :'Этот браузер не поддерживает push-уведомления.')+'</p>';
+        return;
+      }
+      if(Notification.permission==='denied'){
+        box.innerHTML='<p class="why">Уведомления запрещены в настройках браузера или телефона. Разреши их для этого сайта и вернись сюда.</p>';
+        return;
+      }
+      if(sub){
+        box.innerHTML='<p class="why">Включены на этом устройстве.</p><div class="row"><button class="btn2 sm" id="p-test" type="button">Тестовое уведомление</button><button class="btn2 sm" id="p-off" type="button">Выключить</button></div>';
+        $('p-test').addEventListener('click',function(){
+          msg('Отправляю…');
+          Store.api('POST','/api/push/test',{}).then(function(r){
+            if(r.status===503){msg('На сервере не заданы ключи VAPID.');return;}
+            return r.json().then(function(j){
+              msg(j.total===0?'На сервере нет подписок. Выключи и включи заново.':j.sent>0?'Отправлено. Если не пришло, проверь режимы «Не беспокоить» и «Фокус».':'Сервис уведомлений не принял сообщение. Включи заново.');
+            });
+          }).catch(function(){msg('Нет связи с сервером.');});
+        });
+        $('p-off').addEventListener('click',function(){
+          navigator.serviceWorker.ready.then(function(reg){return reg.pushManager.getSubscription();}).then(function(sb){
+            if(!sb)return;var ep=sb.endpoint;
+            return sb.unsubscribe().then(function(){return Store.api('POST','/api/push/unsubscribe',{endpoint:ep});});
+          }).then(function(){msg('Выключено.');draw(null);}).catch(function(){msg('Не получилось выключить.');});
+        });
+      }else{
+        box.innerHTML='<p class="why">Выключены. Напоминания придут, когда включишь.</p><div><button class="btn2 sm" id="p-on" type="button">Включить</button></div>';
+        $('p-on').addEventListener('click',function(){
+          // разрешение просим первым действием в обработчике тапа (требование iOS)
+          var perm=Notification.requestPermission();
+          Promise.resolve(perm).then(function(res){
+            if(res!=='granted'){msg('Разрешение не получено.');draw(null);return;}
+            return Store.api('GET','/api/vapid-public-key').then(function(r){
+              if(!r.ok)throw new Error('Сервер без ключей VAPID.');return r.json();
+            }).then(function(j){
+              return navigator.serviceWorker.ready.then(function(reg){
+                return reg.pushManager.getSubscription().then(function(old){return old?old.unsubscribe():null;}).then(function(){
+                  return reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:urlB64(j.key)});
+                });
+              });
+            }).then(function(sb){
+              return Store.api('POST','/api/push/subscribe',{subscription:sb.toJSON(),tz:(S.settings&&S.settings.tz)||DEVICE_TZ}).then(function(r){
+                if(!r.ok)throw new Error('Сервер не сохранил подписку.');
+                msg('Включено.');draw(sb);
+              });
+            });
+          }).catch(function(e){msg(e&&e.message?e.message:'Не получилось включить.');draw(null);});
+        });
+      }
+    }
+    if(!pushSupported()){draw(null);return;}
+    navigator.serviceWorker.ready.then(function(reg){return reg.pushManager.getSubscription();}).then(function(sb){
+      draw(sb);
+      // подписка есть в браузере, но сервер мог её потерять: тихо отправим ещё раз
+      if(sb)Store.api('POST','/api/push/subscribe',{subscription:sb.toJSON(),tz:(S.settings&&S.settings.tz)||DEVICE_TZ}).catch(function(){});
+    }).catch(function(){draw(null);});
+  }
   function dataHtml(){
     if(DEMO)return '';
     var lg=Store.legacyHabits();
@@ -752,7 +842,7 @@
       '<button class="go" id="f-save" type="button" style="opacity:1;pointer-events:auto">'+(isNew?'Добавить':'Сохранить')+'</button>'+
       '<div class="sec"><span class="lab">Небо наверху</span>'+optsHtml('f-sky',[['1','Вкл'],['0','Выкл']],sky?'1':'0')+'</div>'+
       (!isNew&&S.habits.length>1?'<button class="btn2 danger full" id="del" type="button">Удалить привычку</button>':'')+
-      dataHtml()+(!DEMO?'':'<details><summary>Демо: подвинуть часы</summary><div class="demo">'+
+      pushHtml()+dataHtml()+(!DEMO?'':'<details><summary>Демо: подвинуть часы</summary><div class="demo">'+
       '<div class="sec"><label class="lab" for="dtime">Время сейчас</label><input class="in" type="time" id="dtime" value="'+fmtMin(nowMin())+'"></div>'+
       '<div class="row"><button class="btn2 sm" id="dreal" type="button">Реальное время</button><button class="btn2 sm" id="dday" type="button">Следующий день</button><button class="btn2 sm" id="dfast" type="button">Таймеры ×60: '+(demo.fast?'вкл':'выкл')+'</button></div></div></details>');
     renderTop();renderRail();
@@ -843,7 +933,7 @@
     $('dday').addEventListener('click',function(){demo.offset+=1;hintUsed=false;toast('Следующий день');});
     $('dfast').addEventListener('click',function(){demo.fast=!demo.fast;this.textContent='Таймеры ×60: '+(demo.fast?'вкл':'выкл');});
     }
-    bindData();
+    bindData();bindPush();
     var del=$('del');
     if(del)del.addEventListener('click',function(){
       if(!del.dataset.sure){del.dataset.sure='1';del.textContent='Точно удалить?';del.classList.add('warn');return;}

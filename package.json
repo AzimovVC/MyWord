@@ -1,1 +1,1 @@
-{"name":"slovo-dano","private":true,"type":"module","scripts":{"dev":"wrangler dev","deploy":"wrangler deploy","test":"node --test \"test/*.test.mjs\""},"devDependencies":{"wrangler":"^4"}}
+{"name":"slovo-dano","private":true,"type":"module","scripts":{"dev":"wrangler dev","deploy":"wrangler deploy","test":"node --test \"test/*.test.mjs\""},"devDependencies":{"http_ece":"^1.2.1","web-push":"^4.0.0","wrangler":"^4"}}

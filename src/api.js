@@ -1,3 +1,4 @@
+import { sendToAll } from './push.js';
 import {
   habitFromRow, habitToParams, HABIT_SQL, logFromRow, logToParams, LOG_SQL,
   urgeFromRow, urgeToParams, URGE_SQL, SETTING_KEYS,
@@ -14,6 +15,10 @@ const pad = (n) => String(n).padStart(2, '0');
 const dayKey = (ms) => { const d = new Date(ms); return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`; };
 const newId = () => Date.now() * 1000 + Math.floor(Math.random() * 1000);
 const BATCH = 50;
+export const validTz = (tz) => {
+  if (typeof tz !== 'string' || !tz || tz.length > 60) return false;
+  try { new Intl.DateTimeFormat('en', { timeZone: tz }); return true; } catch { return false; }
+};
 
 async function runBatch(db, stmts) {
   for (let i = 0; i < stmts.length; i += BATCH) await db.batch(stmts.slice(i, i + BATCH));
@@ -98,8 +103,36 @@ export async function handleApi(request, env, url, ctx = {}) {
       if (!SETTING_KEYS.includes(mt[1])) return bad('bad_key');
       const b = await body();
       const v = typeof b?.value === 'string' ? b.value.slice(0, 100) : '';
+      if (mt[1] === 'tz' && !validTz(v)) return bad('bad_tz');
       await db.prepare('INSERT OR REPLACE INTO settings (key,value) VALUES (?,?)').bind(mt[1], v).run();
       return json({ ok: true });
+    }
+
+    if (path === '/api/vapid-public-key' && m === 'GET') {
+      if (!env.VAPID_PUBLIC_KEY) return json({ error: 'vapid_not_configured' }, 503);
+      return json({ key: env.VAPID_PUBLIC_KEY });
+    }
+
+    if (path === '/api/push/subscribe' && m === 'POST') {
+      const b = await body();
+      const sub = b?.subscription;
+      const ep = sub?.endpoint, p256dh = sub?.keys?.p256dh, auth = sub?.keys?.auth;
+      if (typeof ep !== 'string' || ep.length > 1000 || !/^https:\/\//.test(ep)) return bad('bad_endpoint');
+      if (typeof p256dh !== 'string' || typeof auth !== 'string' || p256dh.length > 200 || auth.length > 100) return bad('bad_keys');
+      await db.prepare('INSERT OR REPLACE INTO push_subs (endpoint,p256dh,auth,created_at) VALUES (?,?,?,?)').bind(ep, p256dh, auth, Date.now()).run();
+      if (validTz(b.tz)) await db.prepare('INSERT OR REPLACE INTO settings (key,value) VALUES (?,?)').bind('tz', b.tz).run();
+      return json({ ok: true });
+    }
+    if (path === '/api/push/unsubscribe' && m === 'POST') {
+      const b = await body();
+      if (typeof b?.endpoint !== 'string') return bad('bad_endpoint');
+      await db.prepare('DELETE FROM push_subs WHERE endpoint = ?').bind(b.endpoint).run();
+      return json({ ok: true });
+    }
+    if (path === '/api/push/test' && m === 'POST') {
+      if (!env.VAPID_PRIVATE_KEY || !env.VAPID_PUBLIC_KEY || !env.VAPID_SUBJECT) return json({ error: 'vapid_not_configured' }, 503);
+      const r = await sendToAll(env, { title: 'Слово дано', body: 'Тестовое уведомление. Всё работает.', url: '/', tag: 'test' }, { urgency: 'high', ttl: 300 });
+      return json({ ok: true, ...r });
     }
 
     if (path === '/api/export' && m === 'GET') {

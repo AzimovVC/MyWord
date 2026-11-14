@@ -105,3 +105,52 @@ test('удаление привычки убирает её журнал и тя
   assert.equal(s.logs.some((l) => l.hid === 'h1'), false);
   assert.equal(s.urges.length, 0);
 });
+
+/* ---------- push ---------- */
+import crypto from 'node:crypto';
+import ece from 'http_ece';
+import { generateVapidKeys, b64u } from '../src/webpush.js';
+import { net } from '../src/push.js';
+
+function ua() {
+  const e = crypto.createECDH('prime256v1'); e.generateKeys();
+  const a = crypto.randomBytes(16);
+  return { e, a, sub: { endpoint: 'https://push.example/s/' + crypto.randomUUID(), keys: { p256dh: b64u.enc(e.getPublicKey()), auth: b64u.enc(a) } } };
+}
+
+test('push: без ключей VAPID ответ 503', async () => {
+  assert.equal((await call('GET', '/api/vapid-public-key')).status, 503);
+  assert.equal((await call('POST', '/api/push/test', {})).status, 503);
+});
+
+test('push: подписка, tz, тест, удаление мёртвой подписки', async () => {
+  const k = await generateVapidKeys();
+  Object.assign(env, { VAPID_PUBLIC_KEY: k.publicKey, VAPID_PRIVATE_KEY: k.privateKey, VAPID_SUBJECT: 'mailto:a@b.c' });
+  assert.equal((await J(await call('GET', '/api/vapid-public-key'))).key, k.publicKey);
+
+  const live = ua(), dead = ua();
+  assert.equal((await call('POST', '/api/push/subscribe', { subscription: { endpoint: 'http://x', keys: live.sub.keys } })).status, 400);
+  assert.equal((await call('POST', '/api/push/subscribe', { subscription: live.sub, tz: 'Asia/Tokyo' })).status, 200);
+  assert.equal((await call('POST', '/api/push/subscribe', { subscription: dead.sub, tz: 'Not/AZone' })).status, 200);
+  assert.equal((await J(await call('GET', '/api/state'))).settings.tz, 'Asia/Tokyo'); // кривой пояс не принят
+
+  const got = {};
+  net.fetch = async (url, init) => {
+    got[url] = init;
+    return new Response('', { status: url === dead.sub.endpoint ? 410 : 201 });
+  };
+  const r = await J(await call('POST', '/api/push/test', {}));
+  assert.deepEqual(r, { ok: true, sent: 1, failed: 1, removed: 1, total: 2 });
+  const plain = ece.decrypt(Buffer.from(got[live.sub.endpoint].body), { version: 'aes128gcm', privateKey: live.e, authSecret: live.a });
+  assert.equal(JSON.parse(plain.toString()).title, 'Слово дано');
+  const left = await env.DB.prepare('SELECT endpoint FROM push_subs').all();
+  assert.deepEqual(left.results.map((x) => x.endpoint), [live.sub.endpoint]);
+
+  await call('POST', '/api/push/unsubscribe', { endpoint: live.sub.endpoint });
+  assert.equal((await env.DB.prepare('SELECT COUNT(*) c FROM push_subs').first()).c, 0);
+});
+
+test('настройка tz проверяется', async () => {
+  assert.equal((await call('PUT', '/api/settings/tz', { value: 'Mars/Base' })).status, 400);
+  assert.equal((await call('PUT', '/api/settings/tz', { value: 'Europe/Moscow' })).status, 200);
+});

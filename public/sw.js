@@ -1,5 +1,5 @@
 /* Service worker: офлайн-оболочка. API и данные сюда не попадают. */
-var VERSION = 'v3';
+var VERSION = 'v4';
 var SHELL = 'slovo-shell-' + VERSION;
 var FONTS = 'slovo-fonts';
 var FILES = ['/', '/index.html', '/app.css', '/gate.js', '/store.js', '/app.js', '/manifest.webmanifest',
@@ -47,5 +47,39 @@ self.addEventListener('fetch', function (e) {
       var net = fetch(req).then(function (r) { if (r.ok) c.put(req, r.clone()); return r; }).catch(function () { return hit; });
       return hit || net;
     });
+  }));
+});
+
+/* ---------- Push ---------- */
+self.addEventListener('push', function (e) {
+  var d = {};
+  try { d = e.data ? e.data.json() : {}; } catch (err) { d = { body: e.data ? e.data.text() : '' }; }
+  var opts = {
+    body: d.body || '',
+    icon: '/icons/icon-192.png',
+    badge: '/icons/icon-192.png',
+    lang: 'ru',
+    data: { url: d.url || '/', habitId: d.habitId || null },
+    actions: Array.isArray(d.actions) ? d.actions.slice(0, 2) : []
+  };
+  if (d.tag) { opts.tag = d.tag; opts.renotify = true; }
+  e.waitUntil(self.registration.showNotification(d.title || 'Слово дано', opts));
+});
+
+self.addEventListener('notificationclick', function (e) {
+  var n = e.notification, data = n.data || {};
+  var url = data.url || '/';
+  // действие «Тянет» ведёт на экран тяги этой привычки
+  if (e.action === 'urge' && data.habitId) url = '/?urge=' + encodeURIComponent(data.habitId);
+  n.close();
+  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function (list) {
+    for (var i = 0; i < list.length; i++) {
+      var c = list[i];
+      if (new URL(c.url).origin === self.location.origin && 'focus' in c) {
+        c.postMessage({ type: 'open', url: url });
+        return c.focus();
+      }
+    }
+    return self.clients.openWindow(url);
   }));
 });
