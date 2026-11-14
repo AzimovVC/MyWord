@@ -176,3 +176,9 @@ summary{cursor:pointer;font-size:14px;color:var(--mute);padding:6px 0}
   .c,.go{transition:none}
   .c.cur{animation:none}
 }
+
+/* свои тексты уведомлений */
+#ntexts{display:flex;flex-direction:column;gap:10px}
+.ntrow{display:flex;gap:8px;align-items:flex-start}
+.ntrow .ntext{flex:1;min-width:0}
+.ntrow .ntdel{flex:none;font-size:20px;line-height:1}

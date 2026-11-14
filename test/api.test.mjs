@@ -154,3 +154,12 @@ test('настройка tz проверяется', async () => {
   assert.equal((await call('PUT', '/api/settings/tz', { value: 'Mars/Base' })).status, 400);
   assert.equal((await call('PUT', '/api/settings/tz', { value: 'Europe/Moscow' })).status, 200);
 });
+
+test('таймер: старт и стоп', async () => {
+  const ends = Date.now() + 600000;
+  assert.equal((await call('POST', '/api/timer/start', { habitId: 'h3', endsAt: ends })).status, 200);
+  assert.equal((await env.DB.prepare('SELECT ends_at FROM timers WHERE habit_id = ?').bind('h3').first()).ends_at, ends);
+  assert.equal((await call('POST', '/api/timer/start', { habitId: 'h3', endsAt: 5 })).status, 400);
+  assert.equal((await call('POST', '/api/timer/stop', { habitId: 'h3' })).status, 200);
+  assert.equal(await env.DB.prepare('SELECT 1 FROM timers WHERE habit_id = ?').bind('h3').first(), null);
+});

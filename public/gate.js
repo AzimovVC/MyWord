@@ -60,4 +60,36 @@
     if (ok === false) { try { localStorage.removeItem(KEY); } catch (e) {} form('Токен больше не подходит.'); }
     else start();
   });
+
+  /* ---------- автообновление ----------
+     Сервер при деплое пишет public/version.json (хеш файлов). Приложение запоминает версию,
+     с которой загрузилось, и проверяет её при возврате в приложение, появлении сети и раз в
+     10 минут. Если версия новая, ждёт, пока пользователь ничего не делает, и перезагружается. */
+  var loadedVer = null, pending = false;
+  function getVer() {
+    return fetch('/version.json', { cache: 'no-store' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (j) { return j && j.v ? j.v : null; })
+      .catch(function () { return null; });
+  }
+  function applyUpdate() {
+    if (!pending) return;
+    if (window.slovoIdle && !window.slovoIdle()) { setTimeout(applyUpdate, 20000); return; }
+    var go = function () { location.reload(); };
+    if (navigator.serviceWorker) navigator.serviceWorker.getRegistration().then(function (r) { return r && r.update(); }).then(go, go);
+    else go();
+  }
+  function checkUpdate() {
+    if (pending) return;
+    getVer().then(function (v) {
+      if (!v) return;
+      if (!loadedVer) { loadedVer = v; return; }
+      if (v !== loadedVer) { pending = true; applyUpdate(); }
+    });
+  }
+  getVer().then(function (v) { if (!loadedVer) loadedVer = v; });
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) checkUpdate(); });
+  window.addEventListener('online', checkUpdate);
+  window.addEventListener('pageshow', function (e) { if (e.persisted) checkUpdate(); });
+  setInterval(checkUpdate, 10 * 60 * 1000);
 })();

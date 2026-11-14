@@ -4,12 +4,13 @@ import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import crypto from 'node:crypto';
+import ece from 'http_ece';
 import { getPlatformProxy } from 'wrangler';
 import { runSchedule } from '../src/cron.js';
 import { net } from '../src/push.js';
 import { generateVapidKeys, b64u } from '../src/webpush.js';
 
-let proxy, env, dir, hits;
+let proxy, env, dir, hits, bodies;
 before(async () => {
   dir = mkdtempSync(join(tmpdir(), 'slovo-cron-'));
   proxy = await getPlatformProxy({ persist: { path: dir } });
@@ -21,20 +22,25 @@ before(async () => {
 after(async () => { net.fetch = fetch; await proxy.dispose(); rmSync(dir, { recursive: true, force: true }); });
 
 const e = crypto.createECDH('prime256v1'); e.generateKeys();
-const SUB = { endpoint: 'https://push.example/s/1', p256dh: b64u.enc(e.getPublicKey()), auth: b64u.enc(crypto.randomBytes(16)) };
+const AUTH = crypto.randomBytes(16);
+const SUB = { endpoint: 'https://push.example/s/1', p256dh: b64u.enc(e.getPublicKey()), auth: b64u.enc(AUTH) };
 let status;
 
 beforeEach(async () => {
   for (const t of ['habits', 'logs', 'urges', 'sent', 'push_subs', 'settings']) await env.DB.exec(`DELETE FROM ${t};`);
   await env.DB.prepare('INSERT INTO push_subs (endpoint,p256dh,auth,created_at) VALUES (?,?,?,0)').bind(SUB.endpoint, SUB.p256dh, SUB.auth).run();
   await env.DB.prepare("INSERT INTO settings (key,value) VALUES ('tz','UTC')").run();
-  hits = []; status = 201;
-  net.fetch = async (url) => { hits.push(url); return new Response('', { status }); };
+  hits = []; bodies = []; status = 201;
+  net.fetch = async (url, init) => {
+    hits.push(url);
+    bodies.push(JSON.parse(ece.decrypt(Buffer.from(init.body), { version: 'aes128gcm', privateKey: e, authSecret: AUTH }).toString()));
+    return new Response('', { status });
+  };
 });
 
 const addHabit = (h) => env.DB.prepare(
-  'INSERT INTO habits (id,kind,name,start,end,remind,notify,phrases,dur,goal,unit) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
-).bind(h.id, h.kind, h.name, h.start, h.end, h.remind ?? null, h.notify ?? 'normal', '["Я делаю это."]', h.dur ?? null, h.goal ?? null, h.unit ?? null).run();
+  'INSERT INTO habits (id,kind,name,start,end,remind,notify,notify_texts,phrases,dur,goal,unit,why) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
+).bind(h.id, h.kind, h.name, h.start, h.end, h.remind ?? null, h.notify ?? 'normal', JSON.stringify(h.texts ?? []), '["Я делаю это."]', h.dur ?? null, h.goal ?? null, h.unit ?? null, h.why ?? '').run();
 const addLog = (hid, day, type, time = '10:00') => env.DB.prepare('INSERT INTO logs (habit_id,day,time,type,typed,hint,sim) VALUES (?,?,?,?,?,0,1)').bind(hid, day, time, type, type === 'slip' || type === 'part' ? null : 'x').run();
 const setTz = (tz) => env.DB.prepare("INSERT OR REPLACE INTO settings (key,value) VALUES ('tz',?)").bind(tz).run();
 const at = (iso) => Date.parse(iso + 'Z');
@@ -172,4 +178,74 @@ test('старые ключи sent чистятся', async () => {
   await env.DB.prepare('INSERT INTO sent (key,at) VALUES (?,?)').bind('old', at('2026-04-01T00:00:00')).run();
   await runSchedule(env, at('2026-05-04T11:00:00'));
   assert.equal((await sentKeys()).includes('old'), false);
+});
+
+/* ---------- тексты, чередование, таймер ---------- */
+
+test('приёмка: стандартные тексты чередуются, подстановки раскрываются', async () => {
+  await addHabit({ ...AVOID, why: 'Чтобы вечера были длинными.' });
+  await runDay('2026-05-04');
+  const b = bodies.map((x) => x.body);
+  assert.equal(b.length, 5);
+  assert.equal(b[0], 'Без ленты: держишься уже 0 мин. Чтобы вечера были длинными.');
+  assert.equal(b[1], 'До конца 9 ч 0 мин. Тянет, открой «Тянет»');
+  assert.equal(b[2], 'Без ленты: держишься уже 6 ч 0 мин. Чтобы вечера были длинными.');
+  assert.equal(b[3], 'До конца 3 ч 0 мин. Тянет, открой «Тянет»');
+  assert.equal(b[4], 'Период закончился. Подтверди фразой.'); // последнее просит подтвердить
+  for (let i = 1; i < 4; i++) assert.notEqual(b[i], b[i - 1]);
+  assert.deepEqual(bodies[1].actions, [{ action: 'urge', title: 'Тянет' }]);
+  assert.equal(bodies[1].url, '/?habit=h4');
+  assert.equal(bodies.every((x) => !/[{}]/.test(x.body)), true);
+});
+
+test('свои тексты: подстановки, чередование по кругу, сохранение между запусками', async () => {
+  await addHabit({ ...AVOID, notify: 'dense', why: 'зачем', texts: ['A {название}', 'B {держусь}', 'C {осталось}'] });
+  await runSchedule(env, at('2026-05-04T09:00:00'));
+  await runSchedule(env, at('2026-05-04T10:00:00'));
+  await runSchedule(env, at('2026-05-04T11:00:00'));
+  await runSchedule(env, at('2026-05-04T12:00:00'));
+  assert.deepEqual(bodies.map((x) => x.body), ['A Без ленты', 'B 2 ч 0 мин', 'C 9 ч 0 мин', 'A Без ленты']);
+});
+
+test('{серия} и {прогресс} считаются на сервере', async () => {
+  await addHabit({ id: 'c', kind: 'count', name: 'Duo', start: '08:00', end: '22:00', remind: '18:00', goal: 3, unit: 'урок', texts: ['{прогресс}, серия {серия}'] });
+  for (const d of ['2026-05-01', '2026-05-02', '2026-05-03']) await addLog('c', d, 'confirm');
+  await addLog('c', '2026-05-04', 'part'); await addLog('c', '2026-05-04', 'part');
+  await runSchedule(env, at('2026-05-04T18:00:00'));
+  assert.equal(bodies[0].body, '2 из 3, серия 3 дня');
+});
+
+test('служебные ключи ntl:* не попадают в ответ состояния', async () => {
+  await addHabit(AVOID);
+  await runSchedule(env, at('2026-05-04T11:00:00'));
+  assert.equal((await env.DB.prepare("SELECT COUNT(*) c FROM settings WHERE key LIKE 'ntl:%'").first()).c, 1);
+});
+
+const addTimer = (id, endsAt) => env.DB.prepare('INSERT OR REPLACE INTO timers (habit_id,ends_at,notified) VALUES (?,?,0)').bind(id, endsAt).run();
+const TIMER = { id: 't', kind: 'timer', name: 'Медитация', start: '07:30', end: '09:00', dur: 10 };
+
+test('таймер: push в момент конца, один раз', async () => {
+  await addHabit(TIMER);
+  const end = at('2026-05-04T07:40:00');
+  await addTimer('t', end);
+  assert.equal((await runSchedule(env, end - 60000)).sent.length, 0);
+  assert.deepEqual((await runSchedule(env, end + 20000)).sent, ['timer|t']);
+  assert.equal((await runSchedule(env, end + 80000)).sent.length, 0);
+  assert.equal(bodies[0].title, 'Медитация');
+  assert.equal(bodies[0].url, '/?habit=t');
+});
+
+test('таймер: остановка отменяет push', async () => {
+  await addHabit(TIMER);
+  const end = at('2026-05-04T07:40:00');
+  await addTimer('t', end);
+  await env.DB.prepare('DELETE FROM timers WHERE habit_id = ?').bind('t').run(); // как /api/timer/stop
+  assert.equal((await runSchedule(env, end + 20000)).sent.length, 0);
+});
+
+test('таймер: протухший (cron не работал) не шлём', async () => {
+  await addHabit(TIMER);
+  const end = at('2026-05-04T07:40:00');
+  await addTimer('t', end);
+  assert.equal((await runSchedule(env, end + 20 * 60000)).sent.length, 0);
 });

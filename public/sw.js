@@ -1,5 +1,5 @@
 /* Service worker: офлайн-оболочка. API и данные сюда не попадают. */
-var VERSION = 'v5';
+var VERSION = 'v6';
 var SHELL = 'slovo-shell-' + VERSION;
 var FONTS = 'slovo-fonts';
 var FILES = ['/', '/index.html', '/app.css', '/gate.js', '/store.js', '/schedule.js', '/app.js', '/manifest.webmanifest',
@@ -18,7 +18,7 @@ self.addEventListener('activate', function (e) {
 self.addEventListener('fetch', function (e) {
   var req = e.request, url = new URL(req.url);
   if (req.method !== 'GET') return;
-  if (url.origin === location.origin && url.pathname.indexOf('/api/') === 0) return;
+  if (url.origin === location.origin && (url.pathname.indexOf('/api/') === 0 || url.pathname === '/version.json')) return;
 
   // Шрифты Google: сначала кеш, обновляем в фоне
   if (url.hostname === 'fonts.googleapis.com' || url.hostname === 'fonts.gstatic.com') {
@@ -32,23 +32,30 @@ self.addEventListener('fetch', function (e) {
   }
   if (url.origin !== location.origin) return;
 
-  // Страницы: сеть, при её отсутствии оболочка из кеша
-  if (req.mode === 'navigate') {
-    e.respondWith(fetch(req).then(function (r) {
-      var copy = r.clone();
-      caches.open(SHELL).then(function (c) { c.put('/', copy); });
-      return r;
-    }).catch(function () { return caches.match('/'); }));
-    return;
-  }
-  // Остальная статика: кеш, обновление в фоне
-  e.respondWith(caches.open(SHELL).then(function (c) {
-    return c.match(req).then(function (hit) {
-      var net = fetch(req).then(function (r) { if (r.ok) c.put(req, r.clone()); return r; }).catch(function () { return hit; });
-      return hit || net;
-    });
-  }));
+  // Страницы и статика: сначала сеть, чтобы после деплоя сразу открывалась свежая версия.
+  // Если сети нет или она отвечает дольше 3 секунд, берём кеш.
+  e.respondWith(netFirst(req, req.mode === 'navigate' ? '/' : null));
 });
+
+function netFirst(req, fallbackKey) {
+  return new Promise(function (resolve) {
+    var done = false;
+    function finish(r) { if (!done && r) { done = true; resolve(r); } }
+    function fromCache() { return caches.match(req).then(function (h) { return h || (fallbackKey ? caches.match(fallbackKey) : null); }); }
+    var t = setTimeout(function () { fromCache().then(finish); }, 3000);
+    fetch(req).then(function (r) {
+      clearTimeout(t);
+      if (r.ok) {
+        var copy = r.clone();
+        caches.open(SHELL).then(function (c) { c.put(fallbackKey || req, copy); });
+      }
+      finish(r);
+    }).catch(function () {
+      clearTimeout(t);
+      fromCache().then(function (h) { finish(h || Response.error()); });
+    });
+  });
+}
 
 /* ---------- Push ---------- */
 self.addEventListener('push', function (e) {

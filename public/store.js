@@ -88,6 +88,8 @@
   Store.addLog = function (l) { enqueue('POST', '/api/logs', l); };
   Store.delLog = function (id) { enqueue('DELETE', '/api/logs/' + id); };
   Store.addUrge = function (u) { enqueue('POST', '/api/urges', u); };
+  Store.timerStart = function (id, endsAt) { enqueue('POST', '/api/timer/start', { habitId: id, endsAt: endsAt }); };
+  Store.timerStop = function (id) { enqueue('POST', '/api/timer/stop', { habitId: id }); };
   Store.setSetting = function (k, v) { enqueue('PUT', '/api/settings/' + k, { value: String(v) }); };
 
   /* ---- резервная копия ---- */

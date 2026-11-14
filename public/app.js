@@ -465,10 +465,37 @@
     try{var C=window.AudioContext||window.webkitAudioContext;if(C){ctx=new C();if(ctx.resume)ctx.resume();}}catch(e){}
     x={hid:h.id,start:Date.now(),sec:(h.dur||10)*60,ctx:ctx,lock:null};
     tm=x;
+    timerSave(x);
     try{if(navigator.wakeLock)navigator.wakeLock.request('screen').then(function(l){if(tm===x)x.lock=l;else l.release();}).catch(function(){});}catch(e){}
     clearInterval(tmTimer);tmTimer=setInterval(tmTick,500);
     S.sel=h.id;
     if(tab!=='today')setTab('today');else renderToday();
+  }
+  /* таймер переживает закрытие страницы: конец запоминается на сервере (push) и на устройстве */
+  function timerSave(x){
+    if(DEMO)return;
+    Store.timerStart(x.hid,x.start+x.sec*1000);
+    try{localStorage.setItem('slovo-timer',JSON.stringify({hid:x.hid,start:x.start,sec:x.sec}));}catch(e){}
+  }
+  function timerClear(hid){
+    if(DEMO)return;
+    Store.timerStop(hid);
+    try{localStorage.removeItem('slovo-timer');}catch(e){}
+  }
+  function restoreTimer(){
+    if(DEMO)return;
+    var o=null;try{o=JSON.parse(localStorage.getItem('slovo-timer'));}catch(e){}
+    if(!o||!byId(o.hid)){try{localStorage.removeItem('slovo-timer');}catch(e){}return;}
+    var end=o.start+o.sec*1000;
+    if(end<=Date.now()){
+      // сессия закончилась, пока страница была закрыта: записываем её на момент конца
+      var p=Schedule.localParts(end,tzName());
+      addLog({hid:o.hid,day:p.day,time:p.hm,minutes:Math.round(o.sec/60),typed:''});
+      timerClear(o.hid);
+    }else{
+      tm={hid:o.hid,start:o.start,sec:o.sec,ctx:null,lock:null};
+      tmTimer=setInterval(tmTick,500);
+    }
   }
   function releaseTimer(x){clearInterval(tmTimer);tmTimer=null;try{if(x&&x.lock)x.lock.release();}catch(e){}}
   function tmTick(){
@@ -481,6 +508,7 @@
   function finishTimer(){
     var x=tm;if(!x)return;
     releaseTimer(x);chime(x.ctx);tm=null;
+    timerClear(x.hid);
     var h=byId(x.hid);
     addLog({hid:x.hid,day:keyOf(nowDate()),time:fmtMin(nowMin()),minutes:Math.round(x.sec/60),typed:''});
     if(tab==='today'&&S.sel===x.hid)renderToday();
@@ -499,6 +527,7 @@
     b.addEventListener('click',function(){
       if(!b.dataset.sure){b.dataset.sure='1';b.textContent='Остановить без записи?';b.classList.add('warn');return;}
       releaseTimer(tm);try{if(tm.ctx&&tm.ctx.close)tm.ctx.close();}catch(e){}
+      timerClear(tm.hid);
       tm=null;renderToday();toast('Остановлено');
     });
   }
@@ -786,12 +815,24 @@
       Store.markLegacyDone();lg.remove();msg('Привычки перенесены. Журнал прототипа не хранился.');
     });
   }
+  /* ---------- свои тексты уведомлений ---------- */
+  function ntRow(t){
+    return '<div class="ntrow"><textarea class="in ntext" rows="2" maxlength="140" aria-label="Текст уведомления" placeholder="Например: {название}: держусь уже {держусь}">'+esc(t||'')+'</textarea><button class="ib ntdel" type="button" aria-label="Убрать текст">×</button></div>';
+  }
+  function textsHtml(d){
+    var t=d.notifyTexts||[];
+    return '<span class="lab">Свои тексты уведомлений</span>'+
+      '<div id="ntexts">'+t.map(ntRow).join('')+'</div>'+
+      '<div class="pills" id="phchips" aria-label="Подстановки">'+Schedule.PLACEHOLDERS.map(function(x){return '<button type="button" class="pill" data-ph="'+esc(x)+'">'+esc(x)+'</button>';}).join('')+'</div>'+
+      '<div class="row"><button class="btn2 sm'+(t.length>=Schedule.MAX_TEXTS?' hidden':'')+'" id="ntadd" type="button">+ формулировка</button><button class="btn2 sm" id="notetest" type="button">Показать пример</button></div>'+
+      '<p class="why">Не больше '+Schedule.MAX_TEXTS+'. Они чередуются, одна и та же не идёт два раза подряд. Если своих нет, берутся стандартные.</p>';
+  }
   function openEdit(h){
-    draft={id:h.id,kind:h.kind||'do',name:h.name,start:h.start,end:h.end,remind:h.remind||'',dur:h.dur||10,goal:h.goal||3,unit:h.unit||'раз',notify:h.notify||'normal',phrases:h.phrases&&h.phrases.length?h.phrases.slice():[''],why:h.why||'',rule:h.rule||'',mode:h.mode,strict:h.strict};
+    draft={id:h.id,kind:h.kind||'do',name:h.name,start:h.start,end:h.end,remind:h.remind||'',dur:h.dur||10,goal:h.goal||3,unit:h.unit||'раз',notify:h.notify||'normal',phrases:h.phrases&&h.phrases.length?h.phrases.slice():[''],why:h.why||'',rule:h.rule||'',mode:h.mode,strict:h.strict,notifyTexts:(h.notifyTexts||[]).slice()};
     activePh=0;accOpen={};setTab('habit');
   }
   function openNew(){
-    draft={id:null,kind:'do',name:'',start:DEF['do'][0],end:DEF['do'][1],remind:'',dur:10,goal:3,unit:'раз',notify:'normal',phrases:[''],why:'',rule:'',mode:'memory',strict:0.85};
+    draft={id:null,kind:'do',name:'',start:DEF['do'][0],end:DEF['do'][1],remind:'',dur:10,goal:3,unit:'раз',notify:'normal',phrases:[''],why:'',rule:'',mode:'memory',strict:0.85,notifyTexts:[]};
     activePh=0;accOpen={ph:true};setTab('habit');
   }
   function syncDraft(){
@@ -802,6 +843,8 @@
     var un=q('f-unit');if(un)draft.unit=un.value;
     var pl=document.querySelectorAll('.phrase');
     if(pl.length)draft.phrases=Array.prototype.map.call(pl,function(t){return t.value;});
+    var nl=document.querySelectorAll('.ntext');
+    if(nl.length||document.getElementById('ntexts'))draft.notifyTexts=Array.prototype.map.call(nl,function(t){return t.value;});
     [['f-mode','mode'],['f-strict','strict'],['f-kind','kind'],['f-notify','notify']].forEach(function(x){
       var e=document.querySelector('#'+x[0]+' [aria-checked="true"]');
       if(e)draft[x[1]]=x[1]==='strict'?parseFloat(e.dataset.v):e.dataset.v;
@@ -831,8 +874,8 @@
       '<textarea class="in" id="f-why" rows="2" maxlength="120" aria-label="Зачем мне это" placeholder="Зачем мне это, одна строка">'+esc(d.why||'')+'</textarea>'+
       '<input class="in" type="text" id="f-rule" maxlength="100" aria-label="Что считается выполненным" value="'+esc(d.rule||'')+'" placeholder="'+(avoid?'Что считается: ни разу не открывал ленту':timer?'Что считается: без телефона, сидя':'Что считается: сел и поставил ноги на пол')+'">');
     var remHtml=acc('rem','Уведомления',avoid?NOTEL[d.notify]:(d.remind||'выкл'),
-      avoid?optsHtml('f-notify',NOTE,d.notify)+'<p class="why" id="notehint">'+esc(noteText(d))+'</p><div><button class="btn2 sm" id="notetest" type="button">Показать пример</button></div><p class="why">Уведомления придут в установленной версии. В прототипе это только настройка.</p>'
-           :'<input class="in" type="time" id="f-remind" aria-label="Время напоминания" value="'+d.remind+'"><p class="why">Уведомление придёт в установленной версии. В прототипе это только настройка.</p>');
+      avoid?optsHtml('f-notify',NOTE,d.notify)+'<p class="why" id="notehint">'+esc(noteText(d))+'</p><div><button class="btn2 sm'+(d.notify==='dense'?'':' hidden')+'" id="tonormal" type="button">Слишком часто? Переключить на «Обычно»</button></div>'+textsHtml(d)
+           :'<input class="in" type="time" id="f-remind" aria-label="Время напоминания" value="'+d.remind+'"><p class="why">Напоминание приходит, если дело сегодня ещё не сделано.</p>'+textsHtml(d));
     var confHtml=timer?'':acc('conf','Подтверждение',(d.mode==='memory'?'по памяти':'видя фразу')+' · '+Math.round(d.strict*100)+'%',
       '<span class="lab">Как вводить фразу</span>'+optsHtml('f-mode',[['memory','по памяти'],['visible','видя фразу']],d.mode)+
       '<span class="lab">Допуск на опечатки</span>'+optsHtml('f-strict',[[0.8,'80%'],[0.85,'85%'],[0.95,'95%']],d.strict));
@@ -925,9 +968,46 @@
     var nt=$('notetest');
     if(nt)nt.addEventListener('click',function(){
       syncDraft();
-      var a=toMin(draft.start),b=toMin(draft.end),mid=Math.max(60,Math.round((b-a)/4));
-      toast((draft.name.trim()||'Без ленты')+' · держишься уже '+fmtDur(mid)+'. '+(draft.why.trim()||'Ты дал слово.'),4500,true);
+      var a=toMin(draft.start),b=toMin(draft.end),mid=Math.min(b,a+Math.max(60,Math.round((b-a)/4)));
+      var own=(draft.notifyTexts||[]).map(function(x){return x.trim();}).filter(Boolean);
+      var foc=document.activeElement&&document.activeElement.classList&&document.activeElement.classList.contains('ntext')?document.activeElement.value.trim():'';
+      var tpl=foc||own[0]||Schedule.defaultTemplates(draft.kind)[0];
+      var h2={id:draft.id,kind:draft.kind,name:draft.name.trim()||'Привычка',why:draft.why.trim(),start:draft.start,end:draft.end,goal:draft.goal};
+      var vars=Schedule.buildVars(h2,mid,{streak:draft.id?streak(draft.id):0,parts:draft.id?todayParts(draft.id).length:0});
+      toast(Schedule.fillText(tpl,vars)||'Пустой текст',5000,true);
     });
+    var nts=$('ntexts'),lastNt=null;
+    if(nts){
+      nts.addEventListener('focusin',function(e){if(e.target.classList.contains('ntext'))lastNt=e.target;});
+      nts.addEventListener('click',function(e){
+        var x=e.target.closest('.ntdel');if(!x)return;
+        x.parentNode.remove();$('ntadd').classList.remove('hidden');
+      });
+      $('ntadd').addEventListener('click',function(){
+        if(nts.querySelectorAll('.ntext').length>=Schedule.MAX_TEXTS)return;
+        nts.insertAdjacentHTML('beforeend',ntRow(''));
+        lastNt=nts.lastElementChild.querySelector('.ntext');lastNt.focus();
+        if(nts.querySelectorAll('.ntext').length>=Schedule.MAX_TEXTS)$('ntadd').classList.add('hidden');
+      });
+      $('phchips').addEventListener('click',function(e){
+        var b=e.target.closest('[data-ph]');if(!b)return;
+        if(!nts.querySelector('.ntext'))$('ntadd').click();
+        var t=(lastNt&&document.body.contains(lastNt))?lastNt:nts.querySelector('.ntext');
+        var a=t.selectionStart==null?t.value.length:t.selectionStart,z=t.selectionEnd==null?a:t.selectionEnd;
+        t.value=t.value.slice(0,a)+b.dataset.ph+t.value.slice(z);
+        var c=a+b.dataset.ph.length;t.focus();t.setSelectionRange(c,c);lastNt=t;
+      });
+    }
+    var tn=$('tonormal'),fnt=$('f-notify');
+    if(fnt&&tn){
+      fnt.addEventListener('click',function(){var on=fnt.querySelector('[aria-checked="true"]');tn.classList.toggle('hidden',!on||on.dataset.v!=='dense');});
+      tn.addEventListener('click',function(){
+        Array.prototype.forEach.call(fnt.children,function(c){c.setAttribute('aria-checked',String(c.dataset.v==='normal'));});
+        tn.classList.add('hidden');syncDraft();
+        var nh=$('notehint');if(nh)nh.textContent=noteText(draft);
+        var sm=$('sm-rem');if(sm)sm.textContent=NOTEL[draft.notify];
+      });
+    }
     $('f-kind').addEventListener('click',function(e){
       var b=e.target.closest('button');if(!b||b.dataset.v===draft.kind)return;
       syncDraft();
@@ -947,7 +1027,7 @@
     var del=$('del');
     if(del)del.addEventListener('click',function(){
       if(!del.dataset.sure){del.dataset.sure='1';del.textContent='Точно удалить?';del.classList.add('warn');return;}
-      if(tm&&tm.hid===d.id){releaseTimer(tm);tm=null;}
+      if(tm&&tm.hid===d.id){releaseTimer(tm);timerClear(d.id);tm=null;}
       S.habits=S.habits.filter(function(h){return h.id!==d.id;});
       S.logs=S.logs.filter(function(l){return l.hid!==d.id;});
       S.urges=S.urges.filter(function(u){return u.hid!==d.id;});
@@ -969,6 +1049,8 @@
       if(tmr)obj.dur=draft.dur;
       if(draft.kind==='count'){obj.goal=draft.goal;obj.unit=(draft.unit||'').trim()||'раз';}
       if(draft.kind==='avoid')obj.notify=draft.notify;
+      var nts2=(draft.notifyTexts||[]).map(function(x){return x.trim();}).filter(Boolean).slice(0,Schedule.MAX_TEXTS);
+      if(nts2.length)obj.notifyTexts=nts2;
       var wasNew=!draft.id;
       if(!wasNew){S.habits=S.habits.map(function(h){return h.id===obj.id?obj:h;});}
       else{S.habits.push(obj);}
@@ -1026,5 +1108,31 @@
     else renderLog();
     window.scrollTo(0,0);
   }
+  restoreTimer();
   if(S.habits.length)setTab('today',true);else openNew();
+
+  /* ---------- глубокие ссылки: /?habit=ID выбирает привычку, /?urge=ID открывает «Тянет» ---------- */
+  function handleLink(href){
+    var u;try{u=new URL(href,location.href);}catch(e){return false;}
+    var hid=u.searchParams.get('habit'),ug=u.searchParams.get('urge'),id=ug||hid;
+    if(!id)return false;
+    var h=byId(id);
+    if(!h)return true;
+    S.sel=h.id;hintUsed=false;
+    if(ug)openUrge(h);else setTab('today',true);
+    return true;
+  }
+  if(S.habits.length&&handleLink(location.href)){
+    try{history.replaceState(null,'',location.pathname);}catch(e){}
+  }
+  if('serviceWorker' in navigator){
+    navigator.serviceWorker.addEventListener('message',function(e){
+      if(e.data&&e.data.type==='open')handleLink(e.data.url);
+    });
+  }
+  // Для автообновления: страницу можно перезагрузить, только когда пользователь ничего не делает
+  window.slovoIdle=function(){
+    var ae=document.activeElement;
+    return tab==='today'&&!tm&&!urge&&!(ae&&/^(INPUT|TEXTAREA)$/.test(ae.tagName));
+  };
 })();

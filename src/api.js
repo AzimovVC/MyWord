@@ -27,7 +27,7 @@ async function runBatch(db, stmts) {
 async function settingsMap(db) {
   const { results } = await db.prepare('SELECT key,value FROM settings').all();
   const o = {};
-  for (const r of results) o[r.key] = r.value;
+  for (const r of results) if (SETTING_KEYS.includes(r.key)) o[r.key] = r.value; // служебные ключи (ntl:*) наружу не отдаём
   return o;
 }
 
@@ -105,6 +105,21 @@ export async function handleApi(request, env, url, ctx = {}) {
       const v = typeof b?.value === 'string' ? b.value.slice(0, 100) : '';
       if (mt[1] === 'tz' && !validTz(v)) return bad('bad_tz');
       await db.prepare('INSERT OR REPLACE INTO settings (key,value) VALUES (?,?)').bind(mt[1], v).run();
+      return json({ ok: true });
+    }
+
+    if (path === '/api/timer/start' && m === 'POST') {
+      const b = await body();
+      const id = typeof b?.habitId === 'string' ? b.habitId : '';
+      const ends = Number(b?.endsAt);
+      if (!/^[\w-]{1,40}$/.test(id) || !Number.isFinite(ends) || ends < 1e12) return bad('bad_timer');
+      await db.prepare('INSERT OR REPLACE INTO timers (habit_id,ends_at,notified) VALUES (?,?,0)').bind(id, Math.round(ends)).run();
+      return json({ ok: true });
+    }
+    if (path === '/api/timer/stop' && m === 'POST') {
+      const b = await body();
+      if (typeof b?.habitId !== 'string') return bad('bad_timer');
+      await db.prepare('DELETE FROM timers WHERE habit_id = ?').bind(b.habitId).run();
       return json({ ok: true });
     }
 

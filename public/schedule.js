@@ -83,26 +83,94 @@ export function dueFor(habit, hm, logs) {
   return null;
 }
 
-/* ---------- тексты (заготовка под шаг 5) ---------- */
+/* ---------- серия ---------- */
+
+export function plural(n, f) {
+  const a = Math.abs(n) % 100, b = a % 10;
+  if (a > 10 && a < 20) return f[2];
+  if (b > 1 && b < 5) return f[1];
+  if (b === 1) return f[0];
+  return f[2];
+}
+
+// Повторяет правила клиента (streak, hasLog): день засчитан, если есть запись, которая
+// не срыв и не порция, и нет срыва. Срыв сегодня обнуляет серию. logs — вся история привычки.
+export function streakFor(habit, logs, today, nowMinutes) {
+  const has = (day) => {
+    const l = logs.filter((x) => x.day === day);
+    return l.some((x) => !x.slip && !x.part) && !l.some((x) => x.slip);
+  };
+  if (logs.some((l) => l.day === today && l.slip)) return 0;
+  if (habit.kind !== 'timer' && habit.kind !== 'avoid' && !has(today) && nowMinutes > toMin(habit.end)) return 0;
+  let n = 0, d = today;
+  if (!has(d)) d = addDays(d, -1);
+  while (has(d)) { n++; d = addDays(d, -1); }
+  return n;
+}
+
+/* ---------- тексты уведомлений (раздел 7.3) ---------- */
+
+export const PLACEHOLDERS = ['{название}', '{зачем}', '{держусь}', '{осталось}', '{серия}', '{прогресс}'];
+export const MAX_TEXTS = 5;
 
 export function fmtDur(min) {
   const h = Math.floor(min / 60), m = min % 60;
   return h > 0 ? `${h} ч ${m} мин` : `${m} мин`;
 }
 
-export function defaultPayload(habit, due, hm) {
+// Стандартные формулировки, если своих нет. Для «Устоять» взяты из гайда, для остальных видов
+// сделаны по тому же образцу.
+export function defaultTemplates(kind) {
+  if (kind === 'avoid') return ['{название}: держишься уже {держусь}. {зачем}', 'До конца {осталось}. Тянет, открой «Тянет»'];
+  if (kind === 'count') return ['{название}: {прогресс}. Осталось {осталось}.', '{название}: ещё есть время, {прогресс}. {зачем}'];
+  if (kind === 'timer') return ['{название}: пора присесть. {зачем}', '{название}: окно открыто ещё {осталось}.'];
+  return ['{название}: окно открыто ещё {осталось}. {зачем}', 'Пора: {название}.'];
+}
+
+export function templatesOf(habit) {
+  const own = (habit.notifyTexts || []).map((t) => String(t).trim()).filter(Boolean);
+  return own.length ? own : defaultTemplates(habit.kind);
+}
+
+// Значения подстановок. minutes — локальное время в минутах, streak — число дней.
+export function buildVars(habit, minutes, { streak = 0, parts = 0 } = {}) {
+  const held = Math.max(0, minutes - toMin(habit.start));
+  const left = Math.max(0, toMin(habit.end) - minutes);
+  return {
+    'название': habit.name || '',
+    'зачем': habit.why || '',
+    'держусь': fmtDur(held),
+    'осталось': fmtDur(left),
+    'серия': `${streak} ${plural(streak, ['день', 'дня', 'дней'])}`,
+    'прогресс': habit.kind === 'count' ? `${parts} из ${habit.goal || 0}` : '',
+  };
+}
+
+export function fillText(tpl, vars) {
+  return String(tpl)
+    .replace(/\{([^{}]+)\}/g, (m, k) => (k in vars ? vars[k] : m))
+    .replace(/\s+([.,!?:;])/g, '$1').replace(/\s{2,}/g, ' ').trim();
+}
+
+// Следующая формулировка по кругу: одна и та же не идёт два раза подряд (если их больше одной)
+export function nextIndex(count, last) {
+  if (count <= 1) return 0;
+  return Number.isInteger(last) && last >= 0 ? (last + 1) % count : 0;
+}
+
+export const needsStreak = (tpl) => tpl.includes('{серия}');
+
+// Готовое уведомление. Для последнего уведомления «Устоять» текст фиксированный.
+export function buildPayload(habit, due, hm, { streak = 0, lastIdx = null } = {}) {
   const p = { title: habit.name, habitId: habit.id, url: `/?habit=${encodeURIComponent(habit.id)}`, tag: habit.id };
-  if (habit.kind === 'avoid') {
-    const held = fmtDur(Math.max(0, toMin(hm) - toMin(habit.start)));
-    const left = fmtDur(Math.max(0, toMin(habit.end) - toMin(hm)));
-    if (due.last) { p.body = 'Период закончился. Подтверди фразой.'; }
-    else { p.body = `Держишься уже ${held}. До конца ${left}.`; p.actions = [{ action: 'urge', title: 'Тянет' }]; }
-  } else if (habit.kind === 'count') {
-    p.body = `${due.progress.done} из ${due.progress.goal}. Время ещё есть.`;
-  } else if (habit.kind === 'timer') {
-    p.body = 'Время для сессии.';
-  } else {
-    p.body = `Окно открыто до ${habit.end}.`;
+  const m = toMin(hm);
+  if (habit.kind === 'avoid' && due.last) {
+    p.body = 'Период закончился. Подтверди фразой.';
+    return { payload: p, idx: lastIdx };
   }
-  return p;
+  const tpls = templatesOf(habit);
+  const idx = nextIndex(tpls.length, lastIdx);
+  p.body = fillText(tpls[idx], buildVars(habit, m, { streak, parts: due.progress ? due.progress.done : 0 }));
+  if (habit.kind === 'avoid') p.actions = [{ action: 'urge', title: 'Тянет' }];
+  return { payload: p, idx };
 }
