@@ -1,6 +1,6 @@
 (function(){
   var MONTHS=['января','февраля','марта','апреля','мая','июня','июля','августа','сентября','октября','ноября','декабря'];
-  var LS='slovo-dano-v8';
+  var DEMO=!!(window.Store&&window.Store.demo);
   var demo={offset:0,time:null,fast:false};
   var current=null, hintUsed=false, tab='today', draft=null, activePh=0, urge=null, urgeTimer=null, tm=null, tmTimer=null, accOpen={}, sky=false, sceneM=null, sceneRaf=null, sceneBuilt=false;
   try{sky=localStorage.getItem('slovo-sky')==='1';}catch(e){}
@@ -76,14 +76,39 @@
   }
   function byIdIn(list,id){return list.filter(function(h){return h.id===id;})[0];}
   function load(){
-    var habits=null;
-    try{var r=localStorage.getItem(LS);if(r){var o=JSON.parse(r);if(o&&o.habits&&o.habits.length)habits=o.habits;}}catch(e){}
-    if(!habits)habits=seedHabits();
-    var sd=seedData(habits);
-    return {habits:habits,logs:sd.logs,urges:sd.urges,sel:habits[0].id};
+    if(DEMO){
+      var habits=seedHabits(),sd=seedData(habits);
+      return {habits:habits,logs:sd.logs,urges:sd.urges,sel:habits[0].id,settings:{}};
+    }
+    var st=Store.state;
+    return {habits:st.habits,logs:st.logs,urges:st.urges,sel:st.habits[0]?st.habits[0].id:null,settings:st.settings||{}};
   }
-  function save(){try{localStorage.setItem(LS,JSON.stringify({habits:S.habits}));}catch(e){}}
   var S=load();
+  if(!DEMO){
+    Store.getState=function(){return {habits:S.habits,logs:S.logs,urges:S.urges,settings:S.settings};};
+    Store.onSync=function(st){
+      S.habits=st.habits;S.logs=st.logs;S.urges=st.urges;S.settings=st.settings||{};
+      if(!S.habits.length)return;
+      if(!byId(S.sel))S.sel=pickHabit();
+      applySettings();
+      var ae=document.activeElement;
+      if(tab==='today'&&!tm&&!urge&&!(ae&&/^(INPUT|TEXTAREA)$/.test(ae.tagName)))renderToday();
+      else if(tab==='log')renderLog();
+    };
+  }
+  function applySettings(){
+    if(S.settings&&S.settings.sky!=null){sky=S.settings.sky==='1';try{localStorage.setItem('slovo-sky',sky?'1':'0');}catch(e){}}
+  }
+  applySettings();
+  function addLog(l){
+    if(!DEMO){l.id=Store.newId();}
+    S.logs.unshift(l);
+    if(!DEMO){Store.addLog(l);}
+  }
+  function removeLog(i){
+    var l=S.logs.splice(i,1)[0];
+    if(!DEMO&&l&&l.id)Store.delLog(l.id);
+  }
 
   function byId(id){return byIdIn(S.habits,id);}
   function cur(){var h=byId(S.sel);if(!h){h=S.habits[0];S.sel=h.id;}return h;}
@@ -142,7 +167,7 @@
     });
     return (open||soon||sorted()[0]).id;
   }
-  S.sel=pickHabit();
+  if(S.habits.length)S.sel=pickHabit();
 
   function toast(msg,ms,long){
     var t=document.getElementById('toast');t.textContent=msg;t.classList.toggle('long',!!long);t.classList.remove('hidden');
@@ -152,6 +177,7 @@
   /* ---------- chrome ---------- */
   function renderTop(){
     var el=document.getElementById('top');
+    if(!S.habits.length){el.innerHTML='';return;}
     if(tab==='today'){
       var h=cur(),st=streak(h.id);
       var lbl=h.kind==='avoid'?plural(st,['день без срыва','дня без срыва','дней без срыва']):plural(st,['день подряд','дня подряд','дней подряд']);
@@ -391,14 +417,14 @@
     if(ph==='open'&&!timer&&!cnt)bindOpen(h);
     if(cnt){
       document.getElementById('cgo').addEventListener('click',function(){
-        S.logs.unshift({hid:h.id,day:keyOf(nowDate()),time:fmtMin(nowMin()),part:true});
+        addLog({hid:h.id,day:keyOf(nowDate()),time:fmtMin(nowMin()),part:true});
         if(todayParts(h.id).length>=h.goal)toast('Цель набрана');
         renderToday();
       });
       var cu=document.getElementById('cundo');
       if(cu)cu.addEventListener('click',function(){
         var k=keyOf(nowDate()),i=S.logs.findIndex(function(l){return l.hid===h.id&&l.day===k&&l.part;});
-        if(i>=0)S.logs.splice(i,1);
+        if(i>=0)removeLog(i);
         renderToday();
       });
     }
@@ -442,7 +468,7 @@
     var x=tm;if(!x)return;
     releaseTimer(x);chime(x.ctx);tm=null;
     var h=byId(x.hid);
-    S.logs.unshift({hid:x.hid,day:keyOf(nowDate()),time:fmtMin(nowMin()),minutes:Math.round(x.sec/60),typed:''});
+    addLog({hid:x.hid,day:keyOf(nowDate()),time:fmtMin(nowMin()),minutes:Math.round(x.sec/60),typed:''});
     if(tab==='today'&&S.sel===x.hid)renderToday();
     else{toast((h?h.name:'Таймер')+': время вышло',3500);if(tab==='today')renderToday();}
   }
@@ -468,7 +494,7 @@
       if(phaseOf(h)!=='open'){renderToday();return;}
       var lg={hid:h.id,day:keyOf(nowDate()),time:fmtMin(nowMin()),typed:val,hint:hintUsed,sim:sim(val,target)};
       if(h.kind==='count')lg.count=todayParts(h.id).length;
-      S.logs.unshift(lg);
+      addLog(lg);
       hintUsed=false;renderToday();
     });
     var hb=document.getElementById('hintbtn');
@@ -480,7 +506,7 @@
     var s=document.getElementById('slipbtn');
     s.addEventListener('click',function(){
       if(!s.dataset.sure){s.dataset.sure='1';s.textContent='Записать срыв?';s.classList.add('warn');return;}
-      S.logs.unshift({hid:h.id,day:keyOf(nowDate()),time:fmtMin(nowMin()),slip:true});
+      addLog({hid:h.id,day:keyOf(nowDate()),time:fmtMin(nowMin()),slip:true});
       renderToday();
     });
   }
@@ -544,7 +570,7 @@
       }
       clearInterval(urgeTimer);urgeTimer=setInterval(upd,500);upd();
       go.addEventListener('click',function(){
-        S.urges.unshift({hid:h.id,day:keyOf(nowDate()),time:fmtMin(nowMin())});
+        var ug={hid:h.id,day:keyOf(nowDate()),time:fmtMin(nowMin())};S.urges.unshift(ug);if(!DEMO){ug.id=Store.newId();Store.addUrge(ug);}
         urge=null;setTab('today');toast('Устоял в момент тяги');
       });
       document.getElementById('uexit').addEventListener('click',function(){urge=null;setTab('today');});
@@ -612,6 +638,54 @@
   function acc(k,title,val,inner){
     return '<details class="acc" data-k="'+k+'"'+(accOpen[k]?' open':'')+'><summary><span>'+title+'</span><em id="sm-'+k+'">'+val+'</em></summary><div class="accb">'+inner+'</div></details>';
   }
+  function dataHtml(){
+    if(DEMO)return '';
+    var lg=Store.legacyHabits();
+    return '<div class="sec"><span class="lab">Данные</span><div class="row"><button class="btn2 sm" id="d-exp" type="button">Экспорт JSON</button><button class="btn2 sm" id="d-imp" type="button">Импорт JSON</button></div>'+
+      '<input type="file" id="d-file" accept="application/json,.json" class="hidden">'+
+      (lg.length?'<div><button class="btn2 sm" id="d-leg" type="button">Перенести привычки с этого устройства ('+lg.length+')</button></div>':'')+
+      '<p class="why" id="d-msg" role="status"></p></div>';
+  }
+  function bindData(){
+    if(DEMO)return;
+    var $=function(id){return document.getElementById(id);},msg=function(t){var m=$('d-msg');if(m)m.textContent=t;};
+    $('d-exp').addEventListener('click',function(){
+      msg('Готовлю файл…');
+      Store.exportJson().then(function(text){
+        var a=document.createElement('a'),d=new Date();
+        a.href=URL.createObjectURL(new Blob([text],{type:'application/json'}));
+        a.download='slovo-dano-'+keyOf(d)+'.json';
+        document.body.appendChild(a);a.click();a.remove();
+        setTimeout(function(){URL.revokeObjectURL(a.href);},2000);
+        msg('Файл сохранён.');
+      }).catch(function(){msg('Не получилось: нужна связь с сервером.');});
+    });
+    var imp=$('d-imp'),file=$('d-file');
+    imp.addEventListener('click',function(){
+      if(!imp.dataset.sure){imp.dataset.sure='1';imp.textContent='Заменить все данные?';imp.classList.add('warn');return;}
+      file.click();
+    });
+    file.addEventListener('change',function(){
+      var f=file.files[0];if(!f)return;
+      var r=new FileReader();
+      r.onload=function(){
+        msg('Импортирую…');
+        Store.importJson(String(r.result)).then(function(){
+          S.sel=S.habits.length?pickHabit():null;
+          if(S.habits.length){setTab('today',true);toast('Данные восстановлены');}else{openNew();}
+        }).catch(function(e){msg(e.message||'Не удалось импортировать.');});
+      };
+      r.readAsText(f);
+    });
+    var lg=$('d-leg');
+    if(lg)lg.addEventListener('click',function(){
+      Store.legacyHabits().forEach(function(h){
+        if(byId(h.id))return;
+        S.habits.push(h);Store.putHabit(h);
+      });
+      Store.markLegacyDone();lg.remove();msg('Привычки перенесены. Журнал прототипа не хранился.');
+    });
+  }
   function openEdit(h){
     draft={id:h.id,kind:h.kind||'do',name:h.name,start:h.start,end:h.end,remind:h.remind||'',dur:h.dur||10,goal:h.goal||3,unit:h.unit||'раз',notify:h.notify||'normal',phrases:h.phrases&&h.phrases.length?h.phrases.slice():[''],why:h.why||'',rule:h.rule||'',mode:h.mode,strict:h.strict};
     activePh=0;accOpen={};setTab('habit');
@@ -678,9 +752,9 @@
       '<button class="go" id="f-save" type="button" style="opacity:1;pointer-events:auto">'+(isNew?'Добавить':'Сохранить')+'</button>'+
       '<div class="sec"><span class="lab">Небо наверху</span>'+optsHtml('f-sky',[['1','Вкл'],['0','Выкл']],sky?'1':'0')+'</div>'+
       (!isNew&&S.habits.length>1?'<button class="btn2 danger full" id="del" type="button">Удалить привычку</button>':'')+
-      '<details><summary>Демо: подвинуть часы</summary><div class="demo">'+
+      dataHtml()+(!DEMO?'':'<details><summary>Демо: подвинуть часы</summary><div class="demo">'+
       '<div class="sec"><label class="lab" for="dtime">Время сейчас</label><input class="in" type="time" id="dtime" value="'+fmtMin(nowMin())+'"></div>'+
-      '<div class="row"><button class="btn2 sm" id="dreal" type="button">Реальное время</button><button class="btn2 sm" id="dday" type="button">Следующий день</button><button class="btn2 sm" id="dfast" type="button">Таймеры ×60: '+(demo.fast?'вкл':'выкл')+'</button></div></div></details>';
+      '<div class="row"><button class="btn2 sm" id="dreal" type="button">Реальное время</button><button class="btn2 sm" id="dday" type="button">Следующий день</button><button class="btn2 sm" id="dfast" type="button">Таймеры ×60: '+(demo.fast?'вкл':'выкл')+'</button></div></div></details>');
     renderTop();renderRail();
     var $=function(id){return document.getElementById(id);};
     function updCheck(){var c=$('check');if(!c)return;var ph=document.querySelectorAll('.phrase')[activePh];c.innerHTML=checkHtml(ph?ph.value:'',d.kind);}
@@ -746,6 +820,7 @@
       Array.prototype.forEach.call(this.children,function(c){c.setAttribute('aria-checked',String(c===b));});
       sky=b.dataset.v==='1';
       try{localStorage.setItem('slovo-sky',sky?'1':'0');}catch(er){}
+      if(!DEMO){S.settings.sky=sky?'1':'0';Store.setSetting('sky',S.settings.sky);}
     });
     var nt=$('notetest');
     if(nt)nt.addEventListener('click',function(){
@@ -762,10 +837,13 @@
       renderHabit();
     });
     var dt=$('dtime');
+    if(DEMO){
     dt.addEventListener('change',function(){if(dt.value){demo.time=dt.value;hintUsed=false;toast('Время '+dt.value);}});
     $('dreal').addEventListener('click',function(){demo.time=null;dt.value=fmtMin(nowMin());toast('Реальное время');});
     $('dday').addEventListener('click',function(){demo.offset+=1;hintUsed=false;toast('Следующий день');});
     $('dfast').addEventListener('click',function(){demo.fast=!demo.fast;this.textContent='Таймеры ×60: '+(demo.fast?'вкл':'выкл');});
+    }
+    bindData();
     var del=$('del');
     if(del)del.addEventListener('click',function(){
       if(!del.dataset.sure){del.dataset.sure='1';del.textContent='Точно удалить?';del.classList.add('warn');return;}
@@ -773,7 +851,7 @@
       S.habits=S.habits.filter(function(h){return h.id!==d.id;});
       S.logs=S.logs.filter(function(l){return l.hid!==d.id;});
       S.urges=S.urges.filter(function(u){return u.hid!==d.id;});
-      S.sel=sorted()[0].id;save();setTab('today');toast('Удалено');
+      if(!DEMO)Store.delHabit(d.id);S.sel=sorted()[0].id;setTab('today');toast('Удалено');
     });
     $('f-save').addEventListener('click',function(){
       syncDraft();
@@ -794,7 +872,7 @@
       var wasNew=!draft.id;
       if(!wasNew){S.habits=S.habits.map(function(h){return h.id===obj.id?obj:h;});}
       else{S.habits.push(obj);}
-      S.sel=obj.id;save();hintUsed=false;setTab('today',true);toast(wasNew?'Привычка добавлена':'Сохранено');
+      S.sel=obj.id;if(!DEMO)Store.putHabit(obj);hintUsed=false;setTab('today',true);toast(wasNew?'Привычка добавлена':'Сохранено');
     });
   }
 
@@ -848,5 +926,5 @@
     else renderLog();
     window.scrollTo(0,0);
   }
-  setTab('today',true);
+  if(S.habits.length)setTab('today',true);else openNew();
 })();

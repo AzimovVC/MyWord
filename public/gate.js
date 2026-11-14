@@ -9,9 +9,16 @@
   window.slovoLogout = function () { try { localStorage.removeItem(KEY); } catch (e) {} location.reload(); };
 
   function start() {
-    var s = document.createElement('script');
-    s.src = '/app.js';
-    document.body.appendChild(s);
+    var st = document.createElement('script');
+    st.src = '/store.js';
+    st.onload = function () {
+      window.Store.init().then(function () {
+        var s = document.createElement('script');
+        s.src = '/app.js';
+        document.body.appendChild(s);
+      });
+    };
+    document.body.appendChild(st);
   }
 
   // true — токен принят, false — отклонён, null — сети нет (не знаем)

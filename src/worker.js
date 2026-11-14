@@ -1,10 +1,4 @@
-// Шаг 1: только проверка токена. Данные пока в localStorage на клиенте.
-function json(data, status = 200) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
-  });
-}
+import { handleApi, json } from './api.js';
 
 async function sha(s) {
   return new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)));
@@ -26,7 +20,6 @@ export default {
     const url = new URL(request.url);
     if (!url.pathname.startsWith('/api/')) return env.ASSETS.fetch(request);
     if (!(await tokenOk(request, env))) return json({ error: 'unauthorized' }, 401);
-    if (url.pathname === '/api/ping') return json({ ok: true });
-    return json({ error: 'not_found' }, 404);
+    return handleApi(request, env, url);
   },
 };

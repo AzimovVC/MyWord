@@ -7,3 +7,10 @@ directory = "./public"
 binding = "ASSETS"
 # API идёт через Worker, всё остальное отдаёт статика напрямую
 run_worker_first = ["/api/*"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "slovo-dano"
+# Подставь свой id после `npx wrangler d1 create slovo-dano`
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"
