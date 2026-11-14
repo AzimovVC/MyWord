@@ -11,6 +11,6 @@ run_worker_first = ["/api/*"]
 [[d1_databases]]
 binding = "DB"
 database_name = "slovo-dano"
-# Подставь свой id после `npx wrangler d1 create slovo-dano`
-database_id = "00000000-0000-0000-0000-000000000000"
+# id создан командой `npx wrangler d1 create slovo-dano`
+database_id = "66cb977f-ef70-4260-acaf-bb38786158b7"
 migrations_dir = "migrations"
