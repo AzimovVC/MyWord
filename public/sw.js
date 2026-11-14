@@ -1,8 +1,8 @@
 /* Service worker: офлайн-оболочка. API и данные сюда не попадают. */
-var VERSION = 'v4';
+var VERSION = 'v5';
 var SHELL = 'slovo-shell-' + VERSION;
 var FONTS = 'slovo-fonts';
-var FILES = ['/', '/index.html', '/app.css', '/gate.js', '/store.js', '/app.js', '/manifest.webmanifest',
+var FILES = ['/', '/index.html', '/app.css', '/gate.js', '/store.js', '/schedule.js', '/app.js', '/manifest.webmanifest',
   '/icons/icon-192.png', '/icons/icon-512.png', '/icons/apple-touch-icon.png'];
 
 self.addEventListener('install', function (e) {

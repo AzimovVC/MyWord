@@ -13,8 +13,20 @@
   function fmtMin(m){m=((m%1440)+1440)%1440;return pad(Math.floor(m/60))+':'+pad(m%60);}
   function fmtDur(m){var h=Math.floor(m/60),mm=m%60;return h>0?(h+' ч '+mm+' мин'):(mm+' мин');}
   function keyOf(d){return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());}
-  function nowDate(){var d=new Date();d.setDate(d.getDate()+demo.offset);return d;}
-  function nowMin(){if(demo.time)return toMin(demo.time);var d=new Date();return d.getHours()*60+d.getMinutes();}
+  // Время берётся в выбранном часовом поясе (настройка tz, по умолчанию пояс устройства)
+  function tzName(){return (typeof S!=='undefined'&&S&&S.settings&&S.settings.tz)||DEVICE_TZ;}
+  function nowDate(){
+    var tz=tzName(),d;
+    if(tz){var p=Schedule.localParts(Date.now(),tz);d=new Date(p.y,p.mo-1,p.d,p.h,p.mi,p.s);}
+    else d=new Date();
+    d.setDate(d.getDate()+demo.offset);return d;
+  }
+  function nowMin(){
+    if(demo.time)return toMin(demo.time);
+    var tz=tzName();
+    if(tz)return Schedule.localParts(Date.now(),tz).min;
+    var d=new Date();return d.getHours()*60+d.getMinutes();
+  }
   function plural(n,f){var a=Math.abs(n)%100,b=a%10;if(a>10&&a<20)return f[2];if(b>1&&b<5)return f[1];if(b===1)return f[0];return f[2];}
   function newId(){return 'h'+Math.random().toString(36).slice(2,8);}
 
@@ -631,9 +643,7 @@
     var a=toMin(d.start||'00:00'),b=toMin(d.end||'00:00');
     if(b<=a)return '';
     if(d.notify==='off')return 'Без уведомлений. Останется только экран «Тянет».';
-    var step=d.notify==='dense'?60:d.notify==='normal'?180:0,t=[a],m;
-    if(step)for(m=a+step;m<b;m+=step)t.push(m);
-    t.push(b);
+    var t=Schedule.avoidTimes(d.start,d.end,d.notify);
     if(d.notify==='dense')return t.length+' '+plural(t.length,['пинг','пинга','пингов'])+': каждый час с '+d.start+' до '+d.end+'. Тексты разные, но если начнёшь смахивать их не читая, сбавь.';
     return 'Придут в '+t.map(fmtMin).join(', ')+'. Первое в начале периода, последнее просит подтвердить.';
   }
@@ -664,7 +674,7 @@
     if(DEMO)return;
     var $=function(id){return document.getElementById(id);},msg=function(t){var m=$('p-msg');if(m)m.textContent=t;};
     var tzs=$('p-tz');
-    if(tzs)tzs.addEventListener('change',function(){S.settings.tz=tzs.value;Store.setSetting('tz',tzs.value);msg('Пояс сохранён.');});
+    if(tzs)tzs.addEventListener('change',function(){S.settings.tz=tzs.value;Store.setSetting('tz',tzs.value);hintUsed=false;msg('Пояс сохранён. Часы и расписание теперь по нему.');});
     var box=$('p-box');
     if(!box)return;
     function draw(sub){

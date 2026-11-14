@@ -18,3 +18,6 @@ database_name = "slovo-dano"
 # id создан командой `npx wrangler d1 create slovo-dano`
 database_id = "66cb977f-ef70-4260-acaf-bb38786158b7"
 migrations_dir = "migrations"
+
+[triggers]
+crons = ["* * * * *"]

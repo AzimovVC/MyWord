@@ -9,16 +9,20 @@
   window.slovoLogout = function () { try { localStorage.removeItem(KEY); } catch (e) {} location.reload(); };
 
   function start() {
-    var st = document.createElement('script');
-    st.src = '/store.js';
-    st.onload = function () {
-      window.Store.init().then(function () {
-        var s = document.createElement('script');
-        s.src = '/app.js';
-        document.body.appendChild(s);
-      });
-    };
-    document.body.appendChild(st);
+    // Общий модуль расписания (ES-модуль): им пользуются и клиент, и сервер
+    import('/schedule.js').then(function (mod) {
+      window.Schedule = mod;
+      var st = document.createElement('script');
+      st.src = '/store.js';
+      st.onload = function () {
+        window.Store.init().then(function () {
+          var s = document.createElement('script');
+          s.src = '/app.js';
+          document.body.appendChild(s);
+        });
+      };
+      document.body.appendChild(st);
+    });
   }
 
   // true — токен принят, false — отклонён, null — сети нет (не знаем)

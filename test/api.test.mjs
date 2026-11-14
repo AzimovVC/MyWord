@@ -10,7 +10,7 @@ let proxy, env, dir;
 before(async () => {
   dir = mkdtempSync(join(tmpdir(), 'slovo-'));
   proxy = await getPlatformProxy({ persist: { path: dir } });
-  env = { ...proxy.env, APP_TOKEN: 'tok' };
+  env = { ...proxy.env, APP_TOKEN: 'tok', VAPID_PUBLIC_KEY: undefined, VAPID_PRIVATE_KEY: undefined, VAPID_SUBJECT: undefined };
   const sql = readFileSync(new URL('../migrations/0001_init.sql', import.meta.url), 'utf8').replace(/--.*$/gm, '');
   for (const st of sql.split(';').map((x) => x.replace(/\s+/g, ' ').trim()).filter(Boolean)) await env.DB.exec(st + ';');
 });

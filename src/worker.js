@@ -1,4 +1,5 @@
 import { handleApi, json } from './api.js';
+import { runSchedule } from './cron.js';
 
 async function sha(s) {
   return new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)));
@@ -21,5 +22,9 @@ export default {
     if (!url.pathname.startsWith('/api/')) return env.ASSETS.fetch(request);
     if (!(await tokenOk(request, env))) return json({ error: 'unauthorized' }, 401);
     return handleApi(request, env, url);
+  },
+  // Cron Trigger раз в минуту: рассылка push по расписанию
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(runSchedule(env).catch((e) => console.error('cron error', e.name)));
   },
 };
