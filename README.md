@@ -19,6 +19,7 @@
 | `scripts/gen-vapid.mjs` | Генерация ключей VAPID |
 | `scripts/stamp.mjs` | Версия сборки для автообновления |
 | `test/` | Автотесты (`npm test`) |
+| `android/` | Android-обёртка над PWA для Android Studio, см. `android/README.md` |
 
 ## Деплой
 
