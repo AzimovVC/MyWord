@@ -14,10 +14,51 @@ Android-приложение: без адресной строки, со сво�
    в `app/build.gradle.kts`.
 3. Подключи телефон (отладка по USB включена) и нажми Run. Или Build → Build APK(s) и поставь `app-debug.apk` вручную.
 
+## Сборка из терминала (без Android Studio)
+
+Нужны JDK 17 или новее и Android SDK. Пример для macOS с Homebrew:
+
+```bash
+brew install --cask temurin@17 android-commandlinetools
+export JAVA_HOME=$(/usr/libexec/java_home -v 17)
+export ANDROID_HOME="$(brew --prefix)/share/android-commandlinetools"
+yes | sdkmanager --licenses
+sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+```
+
+Дальше из папки `android`:
+
+```bash
+cd android
+./gradlew assembleDebug
+```
+
+APK окажется в `app/build/outputs/apk/debug/app-debug.apk`. Установка на телефон по USB (отладка включена):
+
+```bash
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+Либо отправь APK на телефон и открой его там (разреши установку из этого источника).
+Если `ANDROID_HOME` не подхватывается, создай файл `android/local.properties` со строкой `sdk.dir=/путь/к/sdk`.
+
+Отпечаток ключа подписи записывается в `assetlinks.json` одной командой из корня репозитория
+(отладочный ключ появляется после первой сборки):
+
+```bash
+node scripts/set-fingerprint.mjs
+npx wrangler deploy
+```
+
+Для своего ключа: `node scripts/set-fingerprint.mjs путь/к/ключу.jks алиас пароль`.
+Скрипт добавляет отпечаток к уже записанным, поэтому отладочный и релизный ключи могут жить вместе.
+
 ## Чтобы пропала адресная строка (Digital Asset Links)
 
 Chrome убирает строку адреса, только если сайт подтвердит, что это приложение ему доверяет.
 Без этого приложение работает, но сверху виден адрес сайта.
+
+(Из терминала это делает `node scripts/set-fingerprint.mjs`, см. выше. Ниже то же самое вручную.)
 
 1. Узнай отпечаток SHA-256 ключа, которым подписан установленный APK.
    Для отладочной сборки Android Studio:
